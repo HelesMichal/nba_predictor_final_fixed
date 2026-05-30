@@ -1,0 +1,74 @@
+name: Daily NBA predictions
+
+on:
+  schedule:
+    - cron: "0 15 * * *"   # 17:00 CEST (summer)
+    - cron: "0 16 * * *"   # 17:00 CET  (winter)
+  workflow_dispatch:        # manual "Run workflow" button
+
+concurrency:
+  group: daily-predict
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: python -m pip install -r requirements.txt
+
+      - name: Restore trained model
+        uses: actions/cache@v4
+        with:
+          path: artifacts
+          key: nba-model-${{ github.run_id }}
+          restore-keys: |
+            nba-model-
+
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: nba-data-${{ github.run_id }}
+          restore-keys: |
+            nba-data-
+
+      - name: Fetch required data
+        run: |
+          YEAR=$(date -u +%Y)
+          START=$((YEAR-12))
+          if [ ! -f cache/games.parquet ] || [ ! -f artifacts/model.joblib ]; then
+            echo "No warm cache/model found — fetching the full training window."
+            python -m nba_predictor.cli.main fetch --start "$START" --end "$YEAR"
+          else
+            echo "Warm cache/model found — refreshing the current and previous season."
+            python -m nba_predictor.cli.main fetch --start $((YEAR-1)) --end "$YEAR"
+          fi
+
+      - name: Rebuild dataset
+        run: python -m nba_predictor.cli.main build
+
+      - name: Train model if none cached
+        run: |
+          if [ ! -f artifacts/model.joblib ]; then
+            echo "No cached model found — training now."
+            python -m nba_predictor.cli.main train
+          else
+            echo "Using cached model."
+          fi
+
+      - name: Predict + notify Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -m nba_predictor.cli.main notify --days 1

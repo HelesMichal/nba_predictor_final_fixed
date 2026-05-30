@@ -1,0 +1,80 @@
+name: Weekly retrain
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: "Optional first season start year; blank = automatic 12-season window"
+        required: false
+        default: ""
+      end_year:
+        description: "Optional last season start year; blank = current year"
+        required: false
+        default: ""
+
+concurrency:
+  group: weekly-retrain
+  cancel-in-progress: true
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: python -m pip install -r requirements.txt
+
+      - name: Restore data cache
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: nba-data-retrain-${{ github.run_id }}
+          restore-keys: |
+            nba-data-
+
+      - name: Fetch full training window
+        run: |
+          END=${{ github.event.inputs.end_year || '' }}
+          if [ -z "$END" ]; then END=$(date -u +%Y); fi
+          START=${{ github.event.inputs.start_year || '' }}
+          if [ -z "$START" ]; then START=$((END-12)); fi
+          python -m nba_predictor.cli.main fetch --start "$START" --end "$END"
+
+      - name: Build dataset
+        run: python -m nba_predictor.cli.main build
+
+      - name: Train model
+        run: python -m nba_predictor.cli.main train
+
+      - name: Save trained model to cache
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts
+          key: nba-model-${{ github.run_id }}
+
+      - name: Upload model as workflow artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-model
+          path: artifacts/
+          retention-days: 30
+
+      - name: Notify Telegram that retrain finished
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          STATUS="${{ job.status }}"
+          python -m nba_predictor.notify.telegram "Weekly retrain finished: $STATUS"
