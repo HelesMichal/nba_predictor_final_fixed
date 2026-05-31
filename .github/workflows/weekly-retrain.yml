@@ -37,8 +37,8 @@ jobs:
 
       - name: Retrain
         id: train
-        run: python -m nba_predictor.train
-        working-directory: ./nba_predictor_final_fixed
+        run: python -m nba_predictor.model.train
+        # working-directory: ./nba_predictor_final_fixed
 
       - name: Upload model artifact
         if: success() && steps.train.outcome == 'success'
