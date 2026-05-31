@@ -43,12 +43,31 @@ jobs:
           restore-keys: |
             nba-data-
 
-      - name: Fetch full training window
+      - name: Fetch data (full first-time retrain, current season for weekly runs)
         run: |
           END=${{ github.event.inputs.end_year || '' }}
           if [ -z "$END" ]; then END=$(date -u +%Y); fi
           START=${{ github.event.inputs.start_year || '' }}
-          if [ -z "$START" ]; then START=$((END-12)); fi
+          if [ -z "$START" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              # Only fetch the current NBA season on weekly scheduled runs.
+              MONTH=$(date -u +%m)
+              YEAR=$(date -u +%Y)
+              if [ "$MONTH" -ge 7 ]; then
+                CURRENT_SEASON_START=$YEAR
+              else
+                CURRENT_SEASON_START=$((YEAR-1))
+              fi
+              if [ -f cache/games.parquet ]; then
+                START=$CURRENT_SEASON_START
+                END=$CURRENT_SEASON_START
+              else
+                START=$((END-12))
+              fi
+            else
+              START=$((END-12))
+            fi
+          fi
           python -m nba_predictor.cli.main fetch --start "$START" --end "$END"
 
       - name: Build dataset

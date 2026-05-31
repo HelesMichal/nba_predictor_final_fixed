@@ -14,9 +14,9 @@ from nba_api.stats.static import teams as static_teams
 
 from ..config import NBA_API_SLEEP, GAMES_PARQUET, TEAM_BOX_PARQUET
 
-REQUEST_TIMEOUT = 60          # seconds per nba_api call
-MAX_RETRIES = 4               # 1 try + 3 retries
-BACKOFF_BASE = 3              # seconds (3, 9, 27 ...)
+REQUEST_TIMEOUT = 180         # seconds per nba_api call (increased for reliability on GitHub Actions)
+MAX_RETRIES = 5               # 1 try + 4 retries
+BACKOFF_BASE = 3              # seconds (3, 9, 27, 81, 243 ...)
 
 
 def _merge_with_existing(new_rows: list[pd.DataFrame], path, unique_cols: list[str]) -> pd.DataFrame:
