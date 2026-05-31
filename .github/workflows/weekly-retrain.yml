@@ -58,12 +58,14 @@ jobs:
         run: python -m nba_predictor.cli.main train
 
       - name: Save trained model to cache
+        if: success()
         uses: actions/cache/save@v4
         with:
           path: artifacts
           key: nba-model-${{ github.run_id }}
 
       - name: Upload model as workflow artifact (backup)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: trained-model
@@ -72,6 +74,7 @@ jobs:
 
       - name: Notify Telegram that retrain finished
         if: always()
+        continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
