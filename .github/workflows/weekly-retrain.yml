@@ -25,6 +25,7 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
+        working-directory: ./nba_predictor_final_fixed
 
       - uses: actions/cache@v4
         with:
