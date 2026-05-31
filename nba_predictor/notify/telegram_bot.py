@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..model.predict import predict_for_date
+from ..model.predict import predict_for_date, predict_for_date_with_status
 from .format import format_predictions, format_week_predictions
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -68,18 +68,33 @@ def send_reply(chat_id: str, text: str) -> dict:
 
 
 def _build_response_text(command: str, target_date: date) -> str:
-    df = predict_for_date(target_date)
-    return format_predictions(df, target_date.strftime("%Y-%m-%d"))
+    df, had_placeholder = predict_for_date_with_status(target_date)
+    text = format_predictions(df, target_date.strftime("%Y-%m-%d"))
+    if df.empty and had_placeholder:
+        text += (
+            "\n\n<i>Games are scheduled for this date, but matchup details are not yet available "
+            "from the NBA API.</i>"
+        )
+    return text
 
 
 def _build_week_response_text() -> str:
     today = date.today()
     dfs = []
+    had_placeholder = False
     for offset in range(7):
         target = today + timedelta(days=offset)
-        dfs.append(predict_for_date(target))
+        df, placeholder = predict_for_date_with_status(target)
+        dfs.append(df)
+        had_placeholder = had_placeholder or placeholder
     df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-    return format_week_predictions(df, today.strftime("%Y-%m-%d"), (today + timedelta(days=6)).strftime("%Y-%m-%d"))
+    text = format_week_predictions(df, today.strftime("%Y-%m-%d"), (today + timedelta(days=6)).strftime("%Y-%m-%d"))
+    if df.empty and had_placeholder:
+        text += (
+            "\n\n<i>Games are scheduled for this week, but matchup details are not yet available "
+            "from the NBA API.</i>"
+        )
+    return text
 
 
 def _normalize_command(text: str) -> str:

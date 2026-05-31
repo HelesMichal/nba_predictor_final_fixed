@@ -14,7 +14,7 @@ WEBHOOK_PATH = os.environ.get("TELEGRAM_WEBHOOK_PATH", "/telegram-webhook").stri
 if not WEBHOOK_PATH.startswith("/"):
     WEBHOOK_PATH = "/" + WEBHOOK_PATH
 WEBHOOK_HOST = os.environ.get("TELEGRAM_WEBHOOK_HOST", "0.0.0.0")
-WEBHOOK_PORT = int(os.environ.get("TELEGRAM_WEBHOOK_PORT", "8000"))
+WEBHOOK_PORT = int(os.environ.get("TELEGRAM_WEBHOOK_PORT", os.environ.get("PORT", "8000")))
 
 
 def _api_url(method: str) -> str:
