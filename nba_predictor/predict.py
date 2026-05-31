@@ -26,7 +26,7 @@ CET = dt.timezone(dt.timedelta(hours=1))  # display only; DST handled by GH cron
 def _load_model():
     if not Path(MODEL_PATH).exists():
         raise FileNotFoundError(
-            f"Model not found at {MODEL_PATH}. Run `python -m nba_predictor.train` first."
+            f"Model not found at {MODEL_PATH}. Run `python -m nba_predictor.model.train` first."
         )
     return joblib.load(MODEL_PATH)
 

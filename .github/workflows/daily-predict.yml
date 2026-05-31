@@ -43,7 +43,7 @@ jobs:
         run: |
           if [ ! -f artifacts/model.joblib ]; then
             echo "No model found – training from scratch."
-            python -m nba_predictor.train
+            python -m nba_predictor.model.train
           fi
 
       - name: Send today's predictions
