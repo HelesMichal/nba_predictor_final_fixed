@@ -26,7 +26,7 @@ from ..config import (
     SEASONS_BACK, EXCLUDED_SEASONS,
     SEASON_FULL_WEIGHT_YEARS, SEASON_DECAY,
 )
-from ..features.build import FEATURE_COLS
+from ..features.build import FEATURE_COLS, build_dataset
 
 
 def _season_start_year(s: str) -> int:
@@ -61,7 +61,13 @@ def _prune_correlated(X: pd.DataFrame, threshold: float = 0.97) -> list[str]:
 
 
 def train_and_save():
+    if not DATASET_PARQUET.exists():
+        print(f"[train] {DATASET_PARQUET} missing; building dataset first")
+        build_dataset()
+
     df = pd.read_parquet(DATASET_PARQUET).sort_values("GAME_DATE").reset_index(drop=True)
+    if df.empty:
+        raise ValueError(f"{DATASET_PARQUET} exists but is empty. Run build again or check data fetch.")
     df = df.dropna(subset=["HOME_WIN", "HOME_MARGIN"])
 
     # ---- Season filtering ----

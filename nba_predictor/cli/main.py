@@ -1,12 +1,15 @@
 """Single CLI entrypoint.
 
 Usage:
-  python -m nba_predictor.cli.main fetch   --start 2013 --end 2024
+  python -m nba_predictor.cli.main fetch            --start 2013 --end 2024
   python -m nba_predictor.cli.main build
   python -m nba_predictor.cli.main train
   python -m nba_predictor.cli.main predict
-  python -m nba_predictor.cli.main notify  --days 1   # predict + send to Telegram
-  python -m nba_predictor.cli.main all     --start 2013 --end 2024
+  python -m nba_predictor.cli.main notify           --days 1   # predict + send to Telegram
+  python -m nba_predictor.cli.main telegram-bot     # start Telegram polling bot
+  python -m nba_predictor.cli.main telegram-webhook  # start HTTP webhook server
+  python -m nba_predictor.cli.main set-webhook      --url https://example.com/telegram-webhook
+  python -m nba_predictor.cli.main all              --start 2013 --end 2024
 """
 from __future__ import annotations
 import argparse
@@ -16,7 +19,9 @@ from ..data.nba_api_source import fetch_games, fetch_team_season_stats
 from ..data.br_source import fetch_player_advanced, fetch_current_injuries
 from ..features.build import build_dataset
 from ..model.train import train_and_save
-from ..model.predict import predict_upcoming, validate_last_n_days
+from ..model.predict import predict_upcoming, predict_for_date, validate_last_n_days
+from ..notify.telegram_bot import run_bot as run_telegram_bot
+from ..notify.telegram_webhook import run_webhook_server, set_webhook
 
 
 def cmd_fetch(args):
@@ -37,6 +42,22 @@ def cmd_build(_):
 
 def cmd_train(_):
     train_and_save()
+
+
+def cmd_telegram_bot(args):
+    print("[telegram-bot] starting...")
+    run_telegram_bot()
+
+
+def cmd_telegram_webhook(args):
+    print("[telegram-webhook] starting server...")
+    run_webhook_server()
+
+
+def cmd_set_webhook(args):
+    result = set_webhook(args.url or None)
+    print("[telegram-webhook] setWebhook response:")
+    print(result)
 
 
 def cmd_predict(args):
@@ -94,6 +115,9 @@ def main():
     sub.add_parser("train").set_defaults(func=cmd_train)
     pr = sub.add_parser("predict"); pr.add_argument("--days", type=int, default=1); pr.set_defaults(func=cmd_predict)
     n = sub.add_parser("notify"); n.add_argument("--days", type=int, default=1); n.add_argument("--dry-run", action="store_true"); n.set_defaults(func=cmd_notify)
+    tb = sub.add_parser("telegram-bot"); tb.set_defaults(func=cmd_telegram_bot)
+    tw = sub.add_parser("telegram-webhook"); tw.set_defaults(func=cmd_telegram_webhook)
+    sw = sub.add_parser("set-webhook"); sw.add_argument("--url", type=str, default="", help="Webhook URL to register with Telegram"); sw.set_defaults(func=cmd_set_webhook)
     a = sub.add_parser("all"); a.add_argument("--start", type=int, default=2013); a.add_argument("--end", type=int, default=2024); a.add_argument("--days", type=int, default=1); a.set_defaults(func=cmd_all)
 
     args = p.parse_args()

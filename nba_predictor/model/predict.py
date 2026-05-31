@@ -3,7 +3,7 @@
 Uses the margin-regression + isotonic-calibration bundle written by train.py.
 """
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 import joblib
 import pandas as pd
 import numpy as np
@@ -17,6 +17,11 @@ from ..features.star_score import compute_star_scores
 
 
 def _load_model():
+    if not MODEL_FILE.exists():
+        raise FileNotFoundError(
+            f"Model file not found at {MODEL_FILE}. "
+            "Run `python -m nba_predictor.cli.main train` first, or use `weekly-retrain` to create the model."
+        )
     bundle = joblib.load(MODEL_FILE)
     return bundle["regressor"], bundle["isotonic"], bundle["features"]
 
@@ -62,54 +67,73 @@ def _build_recent_team_features(team_id: int, on_date: pd.Timestamp,
     return {c: row[c] for c in FEATURE_COLS if c.startswith(f"{side}_") and c in row.index}
 
 
+def _predict_for_date(reg, iso, feat_list, dataset: pd.DataFrame, d: date):
+    rows = []
+    try:
+        sb = scoreboardv2.ScoreboardV2(game_date=d.strftime("%Y-%m-%d"))
+        gh = sb.game_header.get_data_frame()
+    except Exception as e:
+        print(f"[warn] scoreboard {d}: {e}")
+        return pd.DataFrame()
+    if gh.empty:
+        return pd.DataFrame()
+    for _, gm in gh.iterrows():
+        home_id_raw = gm.get("HOME_TEAM_ID")
+        away_id_raw = gm.get("VISITOR_TEAM_ID")
+        if pd.isna(home_id_raw) or pd.isna(away_id_raw):
+            print(f"[warn] skipping game with missing team IDs on {d}")
+            continue
+        home_id, away_id = int(home_id_raw), int(away_id_raw)
+        ts = pd.Timestamp(d)
+        h_feats = _build_recent_team_features(home_id, ts, dataset, "h")
+        a_feats = _build_recent_team_features(away_id, ts, dataset, "a")
+        if not h_feats or not a_feats:
+            continue
+        row = {**h_feats, **a_feats}
+        if "h_home_wp_prior" in row and "a_away_wp_prior" in row:
+            row["home_edge"] = (row.get("h_home_wp_prior") or 0) - (row.get("a_away_wp_prior") or 0)
+
+        h_abbr = gm.get("HOME_TEAM_ABBREVIATION", "")
+        a_abbr = gm.get("VISITOR_TEAM_ABBREVIATION", "")
+        for k, v in _injury_adjustment(h_abbr, "h").items():
+            row[k] = row.get(k, 0) + v
+        for k, v in _injury_adjustment(a_abbr, "a").items():
+            row[k] = row.get(k, 0) + v
+
+        X = pd.DataFrame([{c: row.get(c, np.nan) for c in feat_list}])
+        X = X.fillna(X.median(numeric_only=True)).fillna(0)
+        p_arr, m_arr = _predict_proba(reg, iso, X)
+        p_home = float(p_arr[0])
+        rows.append({
+            "date": str(d),
+            "home": h_abbr,
+            "away": a_abbr,
+            "p_home_win": round(p_home, 4),
+            "p_away_win": round(1 - p_home, 4),
+            "pred_margin": round(float(m_arr[0]), 2),
+        })
+    return pd.DataFrame(rows)
+
+
+def predict_for_date(d: date):
+    reg, iso, feat_list = _load_model()
+    dataset = pd.read_parquet(DATASET_PARQUET)
+    dataset["GAME_DATE"] = pd.to_datetime(dataset["GAME_DATE"])
+    return _predict_for_date(reg, iso, feat_list, dataset, d)
+
+
 def predict_upcoming(days_ahead: int = 1):
     reg, iso, feat_list = _load_model()
     dataset = pd.read_parquet(DATASET_PARQUET)
     dataset["GAME_DATE"] = pd.to_datetime(dataset["GAME_DATE"])
-
     rows = []
     today = datetime.utcnow().date()
     for d_offset in range(days_ahead):
         d = today + timedelta(days=d_offset)
-        try:
-            sb = scoreboardv2.ScoreboardV2(game_date=d.strftime("%Y-%m-%d"))
-            gh = sb.game_header.get_data_frame()
-        except Exception as e:
-            print(f"[warn] scoreboard {d}: {e}")
-            continue
-        if gh.empty:
-            continue
-        for _, gm in gh.iterrows():
-            home_id, away_id = int(gm["HOME_TEAM_ID"]), int(gm["VISITOR_TEAM_ID"])
-            ts = pd.Timestamp(d)
-            h_feats = _build_recent_team_features(home_id, ts, dataset, "h")
-            a_feats = _build_recent_team_features(away_id, ts, dataset, "a")
-            if not h_feats or not a_feats:
-                continue
-            row = {**h_feats, **a_feats}
-            if "h_home_wp_prior" in row and "a_away_wp_prior" in row:
-                row["home_edge"] = (row.get("h_home_wp_prior") or 0) - (row.get("a_away_wp_prior") or 0)
-
-            h_abbr = gm.get("HOME_TEAM_ABBREVIATION", "")
-            a_abbr = gm.get("VISITOR_TEAM_ABBREVIATION", "")
-            for k, v in _injury_adjustment(h_abbr, "h").items():
-                row[k] = row.get(k, 0) + v
-            for k, v in _injury_adjustment(a_abbr, "a").items():
-                row[k] = row.get(k, 0) + v
-
-            X = pd.DataFrame([{c: row.get(c, np.nan) for c in feat_list}])
-            X = X.fillna(X.median(numeric_only=True)).fillna(0)
-            p_arr, m_arr = _predict_proba(reg, iso, X)
-            p_home = float(p_arr[0])
-            rows.append({
-                "date": str(d),
-                "home": h_abbr,
-                "away": a_abbr,
-                "p_home_win": round(p_home, 4),
-                "p_away_win": round(1 - p_home, 4),
-                "pred_margin": round(float(m_arr[0]), 2),
-            })
-    return pd.DataFrame(rows)
+        rows.append(_predict_for_date(reg, iso, feat_list, dataset, d))
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
 
 
 def validate_last_n_days(n: int = 5) -> dict:
