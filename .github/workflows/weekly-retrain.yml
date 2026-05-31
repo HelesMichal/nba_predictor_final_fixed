@@ -38,7 +38,7 @@ jobs:
       - name: Retrain
         id: train
         run: python -m nba_predictor.model.train
-        # working-directory: ./nba_predictor_final_fixed
+        working-directory: ./nba_predictor_final_fixed
 
       - name: Upload model artifact
         if: success() && steps.train.outcome == 'success'
@@ -54,6 +54,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+        working-directory: ./nba_predictor_final_fixed
         run: |
           python -c "
           from nba_predictor.notify.telegram import send_message
