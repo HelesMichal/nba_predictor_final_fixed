@@ -1,86 +1,169 @@
-# Running NBA Predictor on GitHub Actions (free) with Telegram alerts
+# NBA Predictor – Deployment guide
 
-This project can run autonomously in the cloud — no laptop needed — using
-**GitHub Actions** as the scheduler and **Telegram** as the notification channel.
-Both are free for personal use.
+Everything in this app runs on **free infrastructure that stays on 24/7**, so
+your laptop can be off. Two pieces:
 
-## What you get
+| Piece | Where it runs | What it does |
+|------|----------------|--------------|
+| Training + scheduled daily push | **GitHub Actions** (free) | Retrains weekly, sends a 17:00 CET digest to Telegram |
+| `/today` `/tomorrow` `/week` commands | **Cloudflare Worker** (free) | Listens for your Telegram messages and triggers an on-demand GitHub Action that replies with predictions |
 
-- **Daily at ~17:00 Central European time** → a Telegram message with today's
-  games, home/away win probabilities, and the model's accuracy over the last 5 days.
-- **Weekly retrain (Mondays 07:00 CET)** that refreshes the model on the latest data.
-- **Manual retrain on demand** from the GitHub Actions UI.
+You only set this up once. After that it runs by itself.
 
-## One-time setup (≈10 minutes)
+---
 
-### 1. Create a Telegram bot
+## 1 · Create the Telegram bot (2 min)
 
-1. Open Telegram, search for **@BotFather**, send `/newbot`.
-2. Pick a name and username — BotFather replies with a **bot token** like
-   `1234567890:AAH...`. Save it.
-3. Open a chat with your new bot and send any message (`hi`).
-4. Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser.
-   Find `"chat":{"id": 123456789, ...}` — that number is your **chat ID**.
+1. Open Telegram, talk to [`@BotFather`](https://t.me/BotFather) → `/newbot` → pick a name.
+2. Copy the **bot token** (looks like `1234:ABC…`). Keep it open.
+3. Talk to your new bot and send `/start`, then visit
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` to copy your **chat id**
+   (the integer inside `"chat":{"id":…}`).
+4. To receive on multiple devices/users: every Telegram account that should
+   get the digest must `/start` the bot. Grab each `chat id` the same way.
+   You can have as many as you want (3, 10, …) — they're just comma-separated.
 
-### 2. Push this project to GitHub
+---
 
-Create a new GitHub repo (public is fine; the model files don't contain anything
-secret). Upload the project contents, including the `.github/workflows/` folder.
+## 2 · Push the repo to GitHub (1 min)
 
-### 3. Add secrets to the repo
+```bash
+gh repo create nba_predictor --private --source . --push
+```
 
-In the repo, go to **Settings → Secrets and variables → Actions → New repository secret**
-and add two secrets:
+Or just create an empty GitHub repo in the UI and `git push`.
 
-| Name                  | Value                          |
-|-----------------------|--------------------------------|
-| `TELEGRAM_BOT_TOKEN`  | The token from BotFather       |
-| `TELEGRAM_CHAT_ID`    | Your numeric chat ID           |
+---
 
-### 4. Trigger the first retrain
+## 3 · Add GitHub Secrets (1 min)
 
-In the repo, go to **Actions → Weekly retrain → Run workflow**.
-This trains the model and stores it in the workflow cache so the daily job can use it.
-Takes ~30–90 minutes the first time (full data fetch); future weekly runs are faster because data and model files are cached.
+GitHub repo → **Settings → Secrets and variables → Actions → New secret**:
 
-That's it. The daily workflow will start firing automatically at the next 17:00 CET/CEST. It is also safe to run before the cache exists; it will fetch the full training window instead of failing on a missing `cache/games.parquet` file.
+| Name | Value |
+|------|-------|
+| `TELEGRAM_BOT_TOKEN` | the bot token from step 1 |
+| `TELEGRAM_CHAT_IDS` | one or more chat ids, comma-separated, e.g. `12345,67890,11111` |
 
-## Manual controls
+That's enough for the **daily 17:00 CET digest** and **weekly Monday retrain**
+to start working. Trigger them once manually from the **Actions** tab to seed
+the cache.
 
-- **Run predictions right now** → Actions → *Daily NBA predictions* → Run workflow
-- **Retrain the model** → Actions → *Weekly retrain* → Run workflow
-- **Test the Telegram integration locally**:
-  ```bash
-  export TELEGRAM_BOT_TOKEN=...
-  export TELEGRAM_CHAT_ID=...
-  python -m nba_predictor.notify.telegram "hello from my laptop"
-  ```
-- **Dry-run the notifier** (no message sent):
-  ```bash
-  python -m nba_predictor.cli.main notify --dry-run
-  ```
+---
 
-## Schedule notes
+## 4 · Deploy the Cloudflare Worker for on-demand commands (5 min)
 
-GitHub Actions cron runs in **UTC** and Central Europe switches between CET (UTC+1) and
-CEST (UTC+2). The workflow defines two cron lines (15:00 and 16:00 UTC) so that one
-of them always lands at 17:00 local. If you'd rather get exactly one notification per
-day, delete whichever cron line you don't want from `.github/workflows/daily-predict.yml`.
+This is what makes `/today`, `/tomorrow`, `/week` work from any device, at any
+time, without your computer being on.
 
-GitHub Actions cron is best-effort and can be delayed by a few minutes during high load —
-don't rely on second-level precision.
+### 4.1 Install wrangler and log in
 
-## Cost
+```bash
+npm i -g wrangler
+wrangler login
+```
 
-- **GitHub Actions**: 2,000 free minutes/month on private repos (unlimited on public).
-  Daily job ≈ 5 min, weekly retrain ≈ 45 min → ~330 min/month. Well within free tier.
-- **Telegram**: free.
+### 4.2 Create a GitHub Personal Access Token
 
-## Alternatives if you'd rather not use GitHub
+GitHub → **Settings → Developer settings → Personal access tokens →
+Fine-grained tokens → Generate new token**:
 
-- **Render.com cron jobs** (free tier) — same idea, run a container on a schedule.
-- **Fly.io machines** — start/stop a tiny VM on a schedule.
-- **A spare Raspberry Pi at home + cron + systemd-timer** — zero cloud cost.
+- Repository access: **Only select repositories** → your `nba_predictor` repo
+- Permissions:
+  - **Contents**: Read and write
+  - **Actions**: Read and write
+  - **Metadata**: Read
 
-The notifier itself (`nba_predictor.notify.telegram`) doesn't care where it runs;
-swap the scheduler however you like.
+Copy the token (starts with `github_pat_…`).
+
+### 4.3 Deploy the worker
+
+```bash
+cd cloudflare-worker
+wrangler deploy
+```
+
+Wrangler prints the worker URL, e.g.
+`https://nba-predictor-bot.<your-subdomain>.workers.dev`. **Copy it.**
+
+### 4.4 Add the worker secrets
+
+```bash
+wrangler secret put TELEGRAM_BOT_TOKEN          # paste BotFather token
+wrangler secret put TELEGRAM_WEBHOOK_SECRET     # any random string, e.g. `openssl rand -hex 24`
+wrangler secret put GITHUB_TOKEN                # the PAT from 4.2
+wrangler secret put GITHUB_REPO                 # e.g. yourname/nba_predictor
+wrangler secret put ALLOWED_CHAT_IDS            # same comma list as TELEGRAM_CHAT_IDS
+```
+
+### 4.5 Point Telegram at the worker
+
+Replace the two placeholders and run:
+
+```bash
+TOKEN="<bot token>"
+URL="https://nba-predictor-bot.<subdomain>.workers.dev"
+SECRET="<the same TELEGRAM_WEBHOOK_SECRET you set above>"
+
+curl -s "https://api.telegram.org/bot$TOKEN/setWebhook" \
+  -d "url=$URL" \
+  -d "secret_token=$SECRET" \
+  -d "allowed_updates=[\"message\"]"
+```
+
+You should see `{"ok":true,…}`.
+
+---
+
+## 5 · Try it
+
+In Telegram, message the bot:
+
+- `/help` – list commands
+- `/today` – today's games + win probabilities
+- `/tomorrow` – tomorrow's slate
+- `/week` – next 7 days
+
+The worker queues a GitHub Action which replies in ~1–2 min directly to the
+chat that asked. The same bot works simultaneously on every device logged
+into Telegram – that's a Telegram-side feature, no extra config needed.
+
+---
+
+## How "works when my computer is off" actually works
+
+- **GitHub Actions** runs on GitHub's servers on a cron — your machine is
+  irrelevant.
+- **Cloudflare Workers** runs at the edge 24/7 — also nothing to do with your
+  machine.
+- The only thing your laptop is used for is the one-time `wrangler deploy`.
+
+---
+
+## Manual operations
+
+- **Retrain now**: GitHub → Actions → *Weekly Retrain* → Run workflow.
+- **Send a prediction now without Telegram**: GitHub → Actions → *On-Demand
+  Predict* → Run workflow → choose mode.
+- **Add a new device/user**: have them `/start` the bot, grab their chat id,
+  append it to both `TELEGRAM_CHAT_IDS` (GitHub secret) and
+  `ALLOWED_CHAT_IDS` (worker secret).
+
+GitHub repo → **Settings → Secrets and variables → Actions → New secret**:
+| `TELEGRAM_CHAT_IDS` | e.g. `12345,67890,11111` |      - 8951792524, ... 
+
+in Terminal (powershell - cloudflare-wroker):
+wrangler secret put ALLOWED_CHAT_IDS                    - 8951792524, ... 
+
+---
+
+## Files you can safely delete
+
+These were leftovers from earlier iterations and aren't used anywhere:
+
+- any `*.bak`, `*.old`, `__pycache__/` directories
+- `notebooks/` (exploration only)
+- `scripts/local_run.sh` / `Dockerfile.dev` if present
+- `tests/fixtures/large_*.parquet` (regenerated from the API)
+
+Keeping the project to: `nba_predictor/`, `.github/workflows/`,
+`cloudflare-worker/`, `requirements.txt`, `README.md`, `DEPLOYMENT.md`.

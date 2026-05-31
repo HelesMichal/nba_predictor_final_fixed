@@ -1,0 +1,10 @@
+name = "nba-predictor-bot"
+main = "worker.js"
+compatibility_date = "2025-05-01"
+
+# Set secrets after `wrangler deploy` with:
+#   wrangler secret put TELEGRAM_BOT_TOKEN
+#   wrangler secret put TELEGRAM_WEBHOOK_SECRET
+#   wrangler secret put GITHUB_TOKEN
+#   wrangler secret put GITHUB_REPO
+#   wrangler secret put ALLOWED_CHAT_IDS

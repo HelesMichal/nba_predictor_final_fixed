@@ -1,0 +1,77 @@
+name: On-Demand Predict
+
+# Triggered by:
+#   - Telegram bot commands (/today, /tomorrow, /week) via the Cloudflare
+#     Worker (repository_dispatch event_type "telegram-command").
+#   - Manual run from the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "today | tomorrow | week"
+        required: true
+        default: "today"
+      chat_id:
+        description: "Telegram chat id (blank = broadcast to all)"
+        required: false
+        default: ""
+  repository_dispatch:
+    types: [telegram-command]
+
+concurrency:
+  group: on-demand-${{ github.event.client_payload.chat_id || github.event.inputs.chat_id || 'all' }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            cache/
+            artifacts/
+          key: nba-data-${{ github.run_id }}
+          restore-keys: |
+            nba-data-
+
+      - name: Resolve inputs
+        id: vars
+        run: |
+          MODE="${{ github.event.client_payload.mode || github.event.inputs.mode }}"
+          CHAT="${{ github.event.client_payload.chat_id || github.event.inputs.chat_id }}"
+          MODE="${MODE:-today}"
+          case "$MODE" in today|tomorrow|week) ;; *) MODE=today ;; esac
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "chat=$CHAT" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure model exists
+        run: |
+          if [ ! -f artifacts/model.joblib ]; then
+            python -m nba_predictor.train
+          fi
+
+      - name: Predict + send
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+        run: |
+          if [ -n "${{ steps.vars.outputs.chat }}" ]; then
+            python -m nba_predictor.predict --mode "${{ steps.vars.outputs.mode }}" --chat-id "${{ steps.vars.outputs.chat }}"
+          else
+            python -m nba_predictor.predict --mode "${{ steps.vars.outputs.mode }}"
+          fi
